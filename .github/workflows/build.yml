@@ -23,8 +23,8 @@ jobs:
 
       - name: Extract SDK
         run: |
-          tar -I zstd -xf *.tar.zst
-          mv immortalwrt-sdk-* sdk
+          mkdir sdk
+          tar -I zstd -xf *.tar.zst -C sdk --strip-components=1
 
       - name: Update and Install Feeds
         run: |
