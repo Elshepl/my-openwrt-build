@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Install Dependencies
         run: |
@@ -37,7 +37,7 @@ jobs:
           make package/htop/compile -j$(nproc) V=s
 
       - name: Upload Built Packages
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: my-compiled-packages
           path: sdk/bin/
