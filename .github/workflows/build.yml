@@ -52,7 +52,7 @@ jobs:
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      - name: Prepare Package
+      - name: Prepare Package and Find Actual Name
         run: |
           PKG_URL="${{ github.event.inputs.pkg_url }}"
           PKG_NAME="${{ github.event.inputs.pkg_name }}"
@@ -73,15 +73,37 @@ jobs:
             fi
           fi
 
+          echo ">>> Searching for actual package folder..."
+          FOUND=$(find sdk/package -maxdepth 5 -type d -name "*${PKG_NAME}*" ! -path "*/.git/*" | head -20)
+          
+          # بنستخدم grep -c لعد السطور، وبنضيف || true عشان لو مفيش نتايج السكريبت ميقفش
+          COUNT=$(echo "$FOUND" | grep -c . || true)
+
+          if [ "$COUNT" -eq 1 ]; then
+            FULL_NAME=$(basename "$FOUND")
+            echo "Found exact match: $FULL_NAME"
+            # بنحفظ الاسم الصحيح في البيئة عشان الخطوات اللي بعد كده تشوفه
+            echo "REAL_PKG_NAME=$FULL_NAME" >> $GITHUB_ENV
+          elif [ "$COUNT" -gt 1 ]; then
+            echo "ERROR: Multiple matches for '$PKG_NAME':"
+            echo "$FOUND" | xargs -I{} basename {}
+            exit 1
+          else
+            echo "ERROR: No package matching '$PKG_NAME' found."
+            exit 1
+          fi
+
       - name: Compile Package
         run: |
           cd sdk
           make defconfig
-          make package/${{ github.event.inputs.pkg_name }}/compile -j$(nproc) V=s
+          # هنا بنستخدم الاسم الصحيح اللي لقيناه في الخطوة اللي فاتت
+          make package/${{ env.REAL_PKG_NAME }}/compile -j$(nproc) V=s
 
       - name: Push Built Packages and Source to Repository
         run: |
-          PKG_NAME="${{ github.event.inputs.pkg_name }}"
+          # بنستخدم برضه الاسم الصحيح في رسالة الرفع
+          PKG_NAME="${{ env.REAL_PKG_NAME }}"
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
