@@ -52,6 +52,10 @@ jobs:
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
+      - name: Debug Find Package
+        run: |
+          find sdk/package -maxdepth 5 -name "*${{ github.event.inputs.pkg_name }}*" -ls
+          
       - name: Prepare Package and Find Actual Name
         run: |
           PKG_URL="${{ github.event.inputs.pkg_url }}"
