@@ -8,7 +8,7 @@ on:
         required: false
         default: ''
       pkg_name:
-        description: 'package name'
+        description: 'package name (e.g. luci-theme-alpha)'
         required: true
         default: ''
 
@@ -25,11 +25,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Free Disk Space
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost /usr/lib/jvm
           sudo apt-get clean
-          df -h
+
       - name: Install Dependencies
         run: |
           sudo apt-get update
@@ -59,14 +60,19 @@ jobs:
       - name: Prepare Package and Find Actual Name
         run: |
           PKG_URL="${{ github.event.inputs.pkg_url }}"
-          PKG_NAME="${{ github.event.inputs.pkg_name }}"
+          # بناخد الاسم فقط في حالة لو المستخدم كتب مسار غلط
+          PKG_NAME=$(basename "${{ github.event.inputs.pkg_name }}")
 
           mkdir -p packages-src
 
           if [ -n "$PKG_URL" ]; then
             echo ">>> Mode: Clone new external package"
+            # بنمسح أي فولدر قديم بنفس الاسم عشان م يحصلش تداخل
+            rm -rf "packages-src/$PKG_NAME"
             git clone "$PKG_URL" "packages-src/$PKG_NAME"
+            # تنظيف مخلفات الجيت والوورك-فلووز
             rm -rf "packages-src/$PKG_NAME/.git"
+            rm -rf "packages-src/$PKG_NAME/.github"
             cp -r "packages-src/$PKG_NAME" "sdk/package/"
           else
             if [ -d "packages-src/$PKG_NAME" ]; then
@@ -78,9 +84,7 @@ jobs:
           fi
 
           echo ">>> Searching for actual package folder or symlink..."
-          # شيلنا -type d عشان يشوف الـ Shortcuts والملفات العادية
           FOUND=$(find sdk/package -maxdepth 5 -name "*${PKG_NAME}*" ! -path "*/.git/*" | head -20)
-          
           COUNT=$(echo "$FOUND" | grep -c . || true)
 
           if [ "$COUNT" -eq 1 ]; then
@@ -105,7 +109,6 @@ jobs:
       - name: Push Built Packages and Source to Repository
         run: |
           PKG_NAME="${{ env.REAL_PKG_NAME }}"
-
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
