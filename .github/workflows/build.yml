@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       pkg_url:
-        description: 'Add Package url (اتركه فاضي لو الباكدج موجودة)'
+        description: 'Add Package url (اتركه فاضي لو الباكدج موجودة علشان ميمسحش تعديلاتك اللي موجودة)'
         required: false
         default: ''
       pkg_name:
