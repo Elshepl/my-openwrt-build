@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       pkg_url:
-        description: 'Add Package url'
+        description: 'Add Package url (اتركه فاضي لو الباكدج موجودة)'
         required: false
         default: ''
       pkg_name:
-        description: 'package name (e.g. luci-theme-alpha)'
+        description: 'package name (e.g. luci-app-homeproxy or homeproxy)'
         required: true
         default: ''
 
@@ -28,7 +28,8 @@ jobs:
 
       - name: Free Disk Space
         run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost /usr/lib/jvm
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost /usr/lib/jvm
           sudo apt-get clean
 
       - name: Install Dependencies
@@ -57,47 +58,113 @@ jobs:
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      - name: Prepare Package and Find Actual Name
+      - name: Prepare Package
         run: |
           PKG_URL="${{ github.event.inputs.pkg_url }}"
-          # تنظيف الاسم من أي مسارات أو رموز غريبة
           CLEAN_NAME=$(basename "${{ github.event.inputs.pkg_name }}")
-          
           mkdir -p packages-src
 
+          # ============================================================
+          # CASE 1: المستخدم أعطى URL → clone وحفظ في packages-src
+          # ============================================================
           if [ -n "$PKG_URL" ]; then
-            echo ">>> Mode: Clone new external package"
-            # حذف أي نسخة قديمة عشان نحدثها بالجديدة
+            echo "━━━ MODE: Clone from URL ━━━"
+            echo "    URL : $PKG_URL"
+            echo "    Name: $CLEAN_NAME"
+
             rm -rf "packages-src/$CLEAN_NAME"
             git clone --depth 1 "$PKG_URL" "packages-src/$CLEAN_NAME"
-            
-            # تنظيف ملفات الجيت والوورك-فلووز عشان ميعملوش مشاكل في الريبو بتاعك
-            find "packages-src/$CLEAN_NAME" -name ".git" -exec rm -rf {} +
-            find "packages-src/$CLEAN_NAME" -name ".github" -exec rm -rf {} +
-            find "packages-src/$CLEAN_NAME" -name ".gitignore" -exec rm -rf {} +
-            
-            cp -r "packages-src/$CLEAN_NAME" "sdk/package/"
+
+            # تنظيف ملفات git من السورس المحفوظ
+            find "packages-src/$CLEAN_NAME" -name ".git"       -exec rm -rf {} + 2>/dev/null || true
+            find "packages-src/$CLEAN_NAME" -name ".github"    -exec rm -rf {} + 2>/dev/null || true
+            find "packages-src/$CLEAN_NAME" -name ".gitignore" -exec rm -f  {} + 2>/dev/null || true
+
+            echo "    ✓ Saved to packages-src/$CLEAN_NAME"
+            echo "PKG_MODE=external" >> $GITHUB_ENV
+
           else
-            if [ -d "packages-src/$CLEAN_NAME" ]; then
-              echo ">>> Mode: Use modified package from packages-src"
-              cp -r "packages-src/$CLEAN_NAME" "sdk/package/"
+            # ============================================================
+            # CASE 2: مفيش URL → ابحث في packages-src أولاً (أولويتك أنت)
+            # ============================================================
+
+            # البحث بـ partial match في packages-src
+            FOUND_LOCAL=$(find packages-src -maxdepth 1 -type d -name "*${CLEAN_NAME}*" | head -5)
+            COUNT_LOCAL=$(echo "$FOUND_LOCAL" | grep -c . 2>/dev/null || echo 0)
+            [ -z "$FOUND_LOCAL" ] && COUNT_LOCAL=0
+
+            if [ "$COUNT_LOCAL" -eq 1 ]; then
+              echo "━━━ MODE: Use your modified package from packages-src ━━━"
+              FULL_NAME=$(basename "$FOUND_LOCAL")
+              echo "    Found: $FULL_NAME"
+              echo "PKG_MODE=local_src"   >> $GITHUB_ENV
+              echo "PKG_FULL=$FULL_NAME"  >> $GITHUB_ENV
+
+            elif [ "$COUNT_LOCAL" -gt 1 ]; then
+              echo "ERROR: Multiple packages match '$CLEAN_NAME' in packages-src:"
+              echo "$FOUND_LOCAL" | xargs -I{} basename {}
+              echo "──────────────────────────────"
+              echo "Please use the full package name."
+              exit 1
+
             else
-              echo ">>> Mode: Use official feed package"
+              # ============================================================
+              # CASE 3: مش موجودة عندك → دور في feeds الرسمية
+              # ============================================================
+              echo "━━━ MODE: Search in official SDK feeds ━━━"
+              FOUND_FEED=$(find sdk/package -maxdepth 5 -type d -name "*${CLEAN_NAME}*" \
+                           ! -path "*/.git/*" | head -5)
+              COUNT_FEED=$(echo "$FOUND_FEED" | grep -c . 2>/dev/null || echo 0)
+              [ -z "$FOUND_FEED" ] && COUNT_FEED=0
+
+              if [ "$COUNT_FEED" -eq 1 ]; then
+                FULL_NAME=$(basename "$FOUND_FEED")
+                echo "    Found in feeds: $FULL_NAME"
+                echo "PKG_MODE=feed"        >> $GITHUB_ENV
+                echo "PKG_FULL=$FULL_NAME"  >> $GITHUB_ENV
+
+              elif [ "$COUNT_FEED" -gt 1 ]; then
+                echo "ERROR: Multiple packages match '$CLEAN_NAME' in feeds:"
+                echo "$FOUND_FEED" | xargs -I{} basename {}
+                echo "──────────────────────────────"
+                echo "Please use the full package name."
+                exit 1
+
+              else
+                echo "ERROR: Package '$CLEAN_NAME' not found anywhere."
+                echo ""
+                echo "Searched in:"
+                echo "  1. packages-src/  (your repo)"
+                echo "  2. sdk/package/   (official feeds)"
+                exit 1
+              fi
             fi
           fi
 
-          echo ">>> Searching for actual package folder or symlink..."
-          # البحث عن الفولدر الحقيقي جوه الـ SDK لإعطاء الاسم لـ make
-          FOUND=$(find sdk/package -maxdepth 5 -name "*${CLEAN_NAME}*" | head -1)
-          
-          if [ -n "$FOUND" ]; then
-            REAL_NAME=$(basename "$FOUND")
-            echo "Found: $REAL_NAME"
-            echo "REAL_PKG_NAME=$REAL_NAME" >> $GITHUB_ENV
+      - name: Copy Package into SDK
+        run: |
+          CLEAN_NAME=$(basename "${{ github.event.inputs.pkg_name }}")
+
+          if [ "$PKG_MODE" = "external" ]; then
+            # جاي من clone جديد → خد من packages-src اللي حفظناها
+            FULL_NAME=$(find packages-src -maxdepth 1 -type d -name "*${CLEAN_NAME}*" \
+                        | head -1 | xargs basename)
+            rm -rf "sdk/package/$FULL_NAME"
+            cp -r "packages-src/$FULL_NAME" "sdk/package/"
+            echo "REAL_PKG_NAME=$FULL_NAME" >> $GITHUB_ENV
+
+          elif [ "$PKG_MODE" = "local_src" ]; then
+            # جاي من packages-src (بعد تعديل) → انسخ للـ SDK
+            rm -rf "sdk/package/$PKG_FULL"
+            cp -r "packages-src/$PKG_FULL" "sdk/package/"
+            echo "REAL_PKG_NAME=$PKG_FULL" >> $GITHUB_ENV
+
           else
-            echo "ERROR: Package '$CLEAN_NAME' not found."
-            exit 1
+            # feed رسمي → موجود بالفعل في SDK
+            echo "REAL_PKG_NAME=$PKG_FULL" >> $GITHUB_ENV
           fi
+
+          echo "✓ Building: $REAL_PKG_NAME"
 
       - name: Compile Package
         run: |
@@ -105,28 +172,28 @@ jobs:
           make defconfig
           make package/${{ env.REAL_PKG_NAME }}/compile -j$(nproc) V=s
 
-      - name: Push Built Packages and Source to Repository
+      - name: Push Results to Repository
         run: |
-          git config user.name "github-actions[bot]"
+          git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # سحب التعديلات قبل الرفع لضمان عدم وجود Conflict
           git pull --rebase origin main
 
-          # تجهيز فولدر النتائج
+          # نسخ ملفات الـ bin إلى files/
           mkdir -p files
           cp -r sdk/bin/. files/
 
-          # إضافة التغييرات
           git add files/
-          git add packages-src/
 
-          # التحقق إذا كان هناك جديد لرفعه
+          # لو الباكدج خارجية → ارفع سورسها كمان
+          if [ "$PKG_MODE" = "external" ] || [ "$PKG_MODE" = "local_src" ]; then
+            git add packages-src/
+          fi
+
           if git diff --cached --quiet; then
-            echo "Nothing new to commit"
+            echo "Nothing new to commit."
             exit 0
           fi
 
-          git commit -m "build(${{ env.REAL_PKG_NAME }}): update source and bin $(date '+%Y-%m-%d %H:%M UTC')"
+          git commit -m "build(${{ env.REAL_PKG_NAME }}): $(date '+%Y-%m-%d %H:%M UTC')"
           git push origin main
-          
