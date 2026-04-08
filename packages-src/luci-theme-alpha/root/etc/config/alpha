@@ -32,7 +32,7 @@ config navbar
 	option name 'File browser'
 	option enable 'Enable'
 	option line '3'
-	option newtab 'No'
+	option newtab 'Yes'
 	option icon '/www/luci-static/alpha/gaya/icon/navbar/filemanager.png'
 	option address 'http://192.168.2.1:8989/'
 
